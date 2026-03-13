@@ -1,0 +1,18 @@
+# Python
+venv/
+__pycache__/
+*.py[cod]
+*.egg-info/
+.eggs/
+dist/
+build/
+
+# Env
+.env
+
+# Alembic
+backend/db/migrations/versions/*.pyc
+
+# OS
+.DS_Store
+Thumbs.db
