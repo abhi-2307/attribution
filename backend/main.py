@@ -51,10 +51,12 @@ async def create_tables():
         await conn.run_sync(Base.metadata.create_all)
     logger.info("Database schema and tables ensured.")
 
-# Allow the pixel script to POST from any domain (restrict origins in production)
+# Pixel must accept requests from any domain.
+# allow_credentials=True requires explicit origins (not "*"), so we use allow_origin_regex instead.
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["*"],
+    allow_origin_regex=".*",
+    allow_credentials=True,
     allow_methods=["POST", "GET", "OPTIONS"],
     allow_headers=["*"],
 )
