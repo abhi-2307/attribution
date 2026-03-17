@@ -12,6 +12,10 @@ from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import Response
 
+from sqlalchemy import text
+from .db.database import engine
+from .models import Base, PixelEventRaw, PixelEventQueue, Session, Order, OrderJourney, IdentityGraph  # noqa: F401 — registers all models
+
 from .api.pixel import router as pixel_router
 from .api.shopify import router as shopify_router
 from .api.attribution import router as attribution_router
@@ -36,6 +40,16 @@ app = FastAPI(
     description="First-party attribution system — pixel ingestion, session building, journey reconstruction, and attribution engine.",
     version="0.1.0",
 )
+
+
+@app.on_event("startup")
+async def create_tables():
+    async with engine.begin() as conn:
+        # Create the attribution schema if it doesn't exist
+        await conn.execute(text("CREATE SCHEMA IF NOT EXISTS attribution"))
+        # Create all tables
+        await conn.run_sync(Base.metadata.create_all)
+    logger.info("Database schema and tables ensured.")
 
 # Allow the pixel script to POST from any domain (restrict origins in production)
 app.add_middleware(
