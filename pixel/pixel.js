@@ -2,6 +2,8 @@
  * First-Party Attribution Pixel
  * Tracks user events, captures UTM params and click IDs,
  * builds sessions, and sends data to the attribution backend.
+ *
+ * Auto-detects Shopify events — no manual integration needed.
  */
 
 (function () {
@@ -41,6 +43,17 @@
     return params.get(name) || null;
   }
 
+  function hashEmail(email) {
+    // Simple SHA-256 via SubtleCrypto — async, best effort
+    if (!email || !crypto.subtle) return Promise.resolve(null);
+    var encoded = new TextEncoder().encode(email.trim().toLowerCase());
+    return crypto.subtle.digest('SHA-256', encoded).then(function (buf) {
+      return Array.from(new Uint8Array(buf)).map(function (b) {
+        return b.toString(16).padStart(2, '0');
+      }).join('');
+    }).catch(function () { return null; });
+  }
+
   // ─── Visitor ID ───────────────────────────────────────────────────────────
 
   function getOrCreateVisitorId() {
@@ -62,7 +75,6 @@
       try {
         var parsed = JSON.parse(decodeURIComponent(cookieVal));
         if (now - parsed.last_active < SESSION_TIMEOUT_MS) {
-          // Refresh last_active
           parsed.last_active = now;
           setCookie(SESSION_COOKIE, JSON.stringify(parsed), 1);
           return parsed.sid;
@@ -70,7 +82,6 @@
       } catch (e) {}
     }
 
-    // New session
     var newSession = { sid: uuidv4(), last_active: now };
     setCookie(SESSION_COOKIE, JSON.stringify(newSession), 1);
     return newSession.sid;
@@ -91,7 +102,6 @@
 
     if (Object.keys(incoming).length === 0) return;
 
-    // Merge with existing stored attribution — incoming wins
     var existing = {};
     try {
       existing = JSON.parse(localStorage.getItem(ATTR_STORAGE_KEY) || '{}');
@@ -142,14 +152,12 @@
   function sendEvent(payload) {
     var body = JSON.stringify(payload);
 
-    // Primary: sendBeacon (non-blocking, survives page unload)
     if (navigator.sendBeacon) {
       var blob = new Blob([body], { type: 'application/json' });
       var sent = navigator.sendBeacon(ENDPOINT, blob);
       if (sent) return;
     }
 
-    // Fallback: fetch
     fetch(ENDPOINT, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
@@ -161,75 +169,165 @@
   // ─── Public API ───────────────────────────────────────────────────────────
 
   var Pixel = {
-    /**
-     * Track a page view. Called automatically on load.
-     */
     pageView: function () {
-      var payload = buildPayload('page_view');
-      sendEvent(payload);
+      sendEvent(buildPayload('page_view'));
     },
-
-    /**
-     * Track a product view.
-     * @param {Object} data - { product_id, product_name, price }
-     */
     productView: function (data) {
-      var payload = buildPayload('product_view', data || {});
-      sendEvent(payload);
+      sendEvent(buildPayload('product_view', data || {}));
     },
-
-    /**
-     * Track add to cart.
-     * @param {Object} data - { product_id, variant_id, quantity, price }
-     */
     addToCart: function (data) {
-      var payload = buildPayload('add_to_cart', data || {});
-      sendEvent(payload);
+      sendEvent(buildPayload('add_to_cart', data || {}));
     },
-
-    /**
-     * Track checkout start.
-     * @param {Object} data - { cart_value, item_count }
-     */
     checkoutStart: function (data) {
-      var payload = buildPayload('checkout_start', data || {});
-      sendEvent(payload);
+      sendEvent(buildPayload('checkout_start', data || {}));
     },
-
-    /**
-     * Track a purchase / conversion.
-     * @param {Object} data - { order_id, order_value, currency, email_hash }
-     */
     purchase: function (data) {
-      var payload = buildPayload('purchase', data || {});
-      sendEvent(payload);
+      sendEvent(buildPayload('purchase', data || {}));
     },
-
-    /**
-     * Generic custom event.
-     * @param {string} eventName
-     * @param {Object} data
-     */
     track: function (eventName, data) {
-      var payload = buildPayload(eventName, data || {});
-      sendEvent(payload);
+      sendEvent(buildPayload(eventName, data || {}));
     },
   };
 
-  // ─── Auto-init ────────────────────────────────────────────────────────────
+  // ─── Shopify Auto-Detection ───────────────────────────────────────────────
 
-  // 1. Capture/refresh attribution params from URL on every page load
-  captureAttributionParams();
+  function shopifyAutoTrack() {
+    var path = window.location.pathname;
+    var meta = (window.ShopifyAnalytics && window.ShopifyAnalytics.meta) || {};
+    var pageType = (meta.page && meta.page.pageType) || '';
 
-  // 2. Fire automatic page_view
-  if (document.readyState === 'loading') {
-    document.addEventListener('DOMContentLoaded', function () {
-      Pixel.pageView();
-    });
-  } else {
-    Pixel.pageView();
+    // ── Product view ──────────────────────────────────────────────────────
+    if (pageType === 'product' || (meta.product && meta.product.id)) {
+      var product = meta.product || {};
+      Pixel.productView({
+        product_id: String(product.id || ''),
+        variant_id: String(product.selectedVariantId || ''),
+        price: product.price ? product.price / 100 : null,
+      });
+    }
+
+    // ── Collection view ───────────────────────────────────────────────────
+    if (pageType === 'collection') {
+      sendEvent(buildPayload('collection_view', {
+        collection: (meta.page && meta.page.handle) || null,
+      }));
+    }
+
+    // ── Search ────────────────────────────────────────────────────────────
+    if (pageType === 'search' || path.indexOf('/search') === 0) {
+      sendEvent(buildPayload('search', {
+        search_query: getUrlParam('q'),
+      }));
+    }
+
+    // ── Cart view ─────────────────────────────────────────────────────────
+    if (path === '/cart') {
+      sendEvent(buildPayload('cart_view'));
+    }
+
+    // ── Checkout start ────────────────────────────────────────────────────
+    if (path.indexOf('/checkouts/') !== -1 && path.indexOf('thank_you') === -1) {
+      Pixel.checkoutStart({});
+    }
+
+    // ── Purchase (thank you page) ─────────────────────────────────────────
+    if (path.indexOf('thank_you') !== -1 || path.indexOf('/orders/') !== -1) {
+      var checkout = window.Shopify && window.Shopify.checkout;
+      if (checkout) {
+        var purchaseData = {
+          order_id: String(checkout.order_id || checkout.id || ''),
+          order_value: parseFloat(checkout.total_price || 0),
+          currency: checkout.currency || null,
+        };
+        var email = checkout.email || '';
+        if (email) {
+          hashEmail(email).then(function (hash) {
+            purchaseData.email_hash = hash;
+            Pixel.purchase(purchaseData);
+          });
+        } else {
+          Pixel.purchase(purchaseData);
+        }
+      } else {
+        // Fallback — fire purchase without order details
+        Pixel.purchase({});
+      }
+    }
+
+    // ── Add to cart — intercept fetch + XHR to /cart/add.js ──────────────
+    interceptCartAdd();
   }
 
-  // 3. Expose globally
+  function interceptCartAdd() {
+    // Intercept fetch
+    var originalFetch = window.fetch;
+    window.fetch = function (input, init) {
+      var url = typeof input === 'string' ? input : (input && input.url) || '';
+      if (url.indexOf('/cart/add') !== -1) {
+        var body = (init && init.body) || null;
+        try {
+          var data = typeof body === 'string' ? JSON.parse(body) : {};
+          Pixel.addToCart({
+            product_id: String(data.id || data.items && data.items[0] && data.items[0].id || ''),
+            variant_id: String(data.id || ''),
+            quantity: data.quantity || (data.items && data.items[0] && data.items[0].quantity) || 1,
+          });
+        } catch (e) {}
+      }
+      return originalFetch.apply(this, arguments);
+    };
+
+    // Intercept XMLHttpRequest
+    var originalOpen = XMLHttpRequest.prototype.open;
+    var originalSend = XMLHttpRequest.prototype.send;
+
+    XMLHttpRequest.prototype.open = function (method, url) {
+      this._pxUrl = url || '';
+      return originalOpen.apply(this, arguments);
+    };
+
+    XMLHttpRequest.prototype.send = function (body) {
+      if (this._pxUrl && this._pxUrl.indexOf('/cart/add') !== -1) {
+        try {
+          var data = typeof body === 'string' ? JSON.parse(body) : {};
+          Pixel.addToCart({
+            product_id: String(data.id || ''),
+            variant_id: String(data.id || ''),
+            quantity: data.quantity || 1,
+          });
+        } catch (e) {}
+      }
+      return originalSend.apply(this, arguments);
+    };
+
+    // Also intercept form submissions to /cart/add
+    document.addEventListener('submit', function (e) {
+      var form = e.target;
+      if (form && form.action && form.action.indexOf('/cart/add') !== -1) {
+        var variantInput = form.querySelector('[name="id"]');
+        var quantityInput = form.querySelector('[name="quantity"]');
+        Pixel.addToCart({
+          variant_id: variantInput ? variantInput.value : '',
+          quantity: quantityInput ? parseInt(quantityInput.value) || 1 : 1,
+        });
+      }
+    }, true);
+  }
+
+  // ─── Auto-init ────────────────────────────────────────────────────────────
+
+  captureAttributionParams();
+
+  function init() {
+    Pixel.pageView();
+    shopifyAutoTrack();
+  }
+
+  if (document.readyState === 'loading') {
+    document.addEventListener('DOMContentLoaded', init);
+  } else {
+    init();
+  }
+
   window.Pixel = Pixel;
 })();
