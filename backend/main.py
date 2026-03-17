@@ -6,6 +6,7 @@ from dotenv import load_dotenv
 load_dotenv()
 
 import os
+import logging
 from pathlib import Path
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
@@ -15,8 +16,20 @@ from .api.pixel import router as pixel_router
 from .api.shopify import router as shopify_router
 from .api.attribution import router as attribution_router
 
+# ── Logging setup ─────────────────────────────────────────────────────────────
+logging.basicConfig(
+    level=logging.INFO,
+    format="%(asctime)s [%(levelname)s] %(name)s: %(message)s",
+)
+logger = logging.getLogger(__name__)
+
 PIXEL_BASE_URL = os.environ.get("PIXEL_BASE_URL", "http://localhost:8000")
 _PIXEL_JS_PATH = Path(__file__).parent.parent / "pixel" / "pixel.js"
+
+logger.info("=== Attribution Platform Starting ===")
+logger.info("PIXEL_BASE_URL = %s", PIXEL_BASE_URL)
+logger.info("pixel.js path  = %s (exists=%s)", _PIXEL_JS_PATH, _PIXEL_JS_PATH.exists())
+logger.info("DATABASE_URL set = %s", bool(os.environ.get("DATABASE_URL")))
 
 app = FastAPI(
     title="Attribution Platform",
@@ -40,6 +53,7 @@ app.include_router(attribution_router)
 
 @app.get("/pixel.js", include_in_schema=False)
 async def serve_pixel_js():
+    logger.info("Serving pixel.js — PIXEL_BASE_URL=%s", PIXEL_BASE_URL)
     js = _PIXEL_JS_PATH.read_text()
     js = js.replace("{{PIXEL_BASE_URL}}", PIXEL_BASE_URL)
     return Response(content=js, media_type="application/javascript")

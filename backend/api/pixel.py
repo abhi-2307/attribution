@@ -4,10 +4,13 @@ POST /v1/pixel/event
 """
 
 import uuid
+import logging
 from datetime import datetime, timezone
 from typing import Optional
 
 from fastapi import APIRouter, Depends, Request, HTTPException, status
+
+logger = logging.getLogger(__name__)
 from pydantic import BaseModel, UUID4, Field
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -90,6 +93,11 @@ async def ingest_event(
     # Extract real IP (handle proxies)
     ip = _extract_ip(request)
 
+    logger.info(
+        "ingest_event: event_name=%s visitor=%s session=%s ip=%s",
+        payload.event_name, payload.visitor_id, payload.session_id, ip,
+    )
+
     # ── Write raw event (immutable) ──────────────────────────────────────────
     raw_event = PixelEventRaw(
         event_id=payload.event_id,
@@ -124,6 +132,7 @@ async def ingest_event(
 
     await db.commit()
 
+    logger.info("event committed to DB: event_id=%s", payload.event_id)
     return {"status": "accepted", "event_id": str(payload.event_id)}
 
 
