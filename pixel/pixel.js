@@ -314,13 +314,79 @@
     }, true);
   }
 
+  // ─── First Visit & Session Start ─────────────────────────────────────────
+
+  function trackFirstVisitAndSession() {
+    var isFirstVisit = !getCookie(VISITOR_COOKIE);
+    var isNewSession = !getCookie(SESSION_COOKIE);
+
+    // getOrCreateVisitorId/SessionId will create cookies if missing
+    getOrCreateVisitorId();
+    getOrCreateSessionId();
+
+    if (isFirstVisit) {
+      sendEvent(buildPayload('first_visit'));
+    }
+    if (isNewSession || isFirstVisit) {
+      sendEvent(buildPayload('session_start'));
+    }
+  }
+
+  // ─── Scroll Depth ─────────────────────────────────────────────────────────
+
+  function trackScrollDepth() {
+    var milestones = [25, 50, 75, 90];
+    var fired = {};
+
+    function onScroll() {
+      var scrolled = window.scrollY + window.innerHeight;
+      var total = document.documentElement.scrollHeight;
+      var pct = Math.round((scrolled / total) * 100);
+
+      milestones.forEach(function (m) {
+        if (pct >= m && !fired[m]) {
+          fired[m] = true;
+          sendEvent(buildPayload('scroll', { scroll_depth: m }));
+        }
+      });
+    }
+
+    window.addEventListener('scroll', onScroll, { passive: true });
+  }
+
+  // ─── User Engagement Duration ─────────────────────────────────────────────
+
+  function trackEngagement() {
+    var startTime = Date.now();
+    var sent = false;
+
+    function sendEngagement() {
+      if (sent) return;
+      sent = true;
+      var duration = Math.round((Date.now() - startTime) / 1000);
+      if (duration < 1) return;
+      sendEvent(buildPayload('user_engagement', { engagement_time_sec: duration }));
+    }
+
+    // Fire on page hide (tab switch, close, navigate away)
+    document.addEventListener('visibilitychange', function () {
+      if (document.visibilityState === 'hidden') sendEngagement();
+    });
+
+    // Fallback for older browsers
+    window.addEventListener('beforeunload', sendEngagement);
+  }
+
   // ─── Auto-init ────────────────────────────────────────────────────────────
 
   captureAttributionParams();
 
   function init() {
+    trackFirstVisitAndSession();
     Pixel.pageView();
     shopifyAutoTrack();
+    trackScrollDepth();
+    trackEngagement();
   }
 
   if (document.readyState === 'loading') {
