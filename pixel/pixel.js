@@ -334,28 +334,6 @@
     }
   }
 
-  // ─── Scroll Depth ─────────────────────────────────────────────────────────
-
-  function trackScrollDepth() {
-    var milestones = [25, 50, 75, 90];
-    var fired = {};
-
-    function onScroll() {
-      var scrolled = window.scrollY + window.innerHeight;
-      var total = document.documentElement.scrollHeight;
-      var pct = Math.round((scrolled / total) * 100);
-
-      milestones.forEach(function (m) {
-        if (pct >= m && !fired[m]) {
-          fired[m] = true;
-          sendEvent(buildPayload('scroll', { scroll_depth: m }));
-        }
-      });
-    }
-
-    window.addEventListener('scroll', onScroll, { passive: true });
-  }
-
   // ─── User Engagement Duration ─────────────────────────────────────────────
 
   function trackEngagement() {
@@ -387,7 +365,6 @@
     trackFirstVisitAndSession();
     Pixel.pageView();
     shopifyAutoTrack();
-    trackScrollDepth();
     trackEngagement();
   }
 
