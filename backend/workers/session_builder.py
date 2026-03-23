@@ -2,7 +2,7 @@
 Phase 3 + 4 — Queue Worker & Session Builder
 
 Pulls events from pixel_event_queue (FOR UPDATE SKIP LOCKED),
-groups them by visitor_id, and upserts sessions with 30-min gap logic.
+groups them by (client_id, visitor_id), and upserts sessions with 30-min gap logic.
 
 Run:
     python -m backend.workers.session_builder
@@ -43,7 +43,6 @@ async def run():
 
 async def process_batch():
     async with AsyncSessionLocal() as db:
-        # Lock a batch of pending queue entries
         queue_rows = await _claim_batch(db)
         if not queue_rows:
             return
@@ -57,18 +56,18 @@ async def process_batch():
         result = await db.execute(
             select(PixelEventRaw)
             .where(PixelEventRaw.event_id.in_(event_ids))
-            .order_by(PixelEventRaw.visitor_id, PixelEventRaw.event_timestamp)
+            .order_by(PixelEventRaw.client_id, PixelEventRaw.visitor_id, PixelEventRaw.event_timestamp)
         )
         raw_events = result.scalars().all()
 
-        # Group by visitor
-        visitor_events: dict[str, list[PixelEventRaw]] = {}
+        # Group by (client_id, visitor_id)
+        visitor_events: dict[tuple[str, str], list[PixelEventRaw]] = {}
         for ev in raw_events:
-            visitor_events.setdefault(ev.visitor_id, []).append(ev)
+            key = (ev.client_id or "", ev.visitor_id)
+            visitor_events.setdefault(key, []).append(ev)
 
-        # Build / update sessions for each visitor
-        for visitor_id, events in visitor_events.items():
-            await _upsert_sessions(db, visitor_id, events)
+        for (client_id, visitor_id), events in visitor_events.items():
+            await _upsert_sessions(db, client_id, visitor_id, events)
 
         # Mark queue entries as done
         await db.execute(
@@ -102,16 +101,15 @@ async def _claim_batch(db: AsyncSession) -> list[PixelEventQueue]:
 
 
 async def _upsert_sessions(
-    db: AsyncSession, visitor_id: str, events: list[PixelEventRaw]
+    db: AsyncSession, client_id: str, visitor_id: str, events: list[PixelEventRaw]
 ):
     """
-    For each visitor, fetch existing open session and either extend it
-    or create a new one based on the 30-minute gap rule.
+    For each (client_id, visitor_id) pair, fetch existing open sessions and either
+    extend them or create new ones based on the 30-minute gap rule.
     """
-    # Load existing sessions for this visitor, most recent first
     result = await db.execute(
         select(Session)
-        .where(Session.visitor_id == visitor_id)
+        .where(Session.client_id == client_id, Session.visitor_id == visitor_id)
         .order_by(Session.session_end.desc().nullslast())
         .limit(10)
     )
@@ -121,12 +119,11 @@ async def _upsert_sessions(
         matched = _find_session(existing_sessions, ev.event_timestamp)
 
         if matched:
-            # Extend the session
             matched.session_end = max(matched.session_end or ev.event_timestamp, ev.event_timestamp)
         else:
-            # New session
             new_session = Session(
                 session_id=ev.session_id,
+                client_id=client_id,
                 visitor_id=visitor_id,
                 session_start=ev.event_timestamp,
                 session_end=ev.event_timestamp,

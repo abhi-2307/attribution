@@ -10,6 +10,7 @@
   'use strict';
 
   const ENDPOINT = '{{PIXEL_BASE_URL}}/v1/pixel/event';
+  const CLIENT_ID = '{{CLIENT_ID}}';
   const VISITOR_COOKIE = '_px_vid';
   const SESSION_COOKIE = '_px_sid';
   const ATTR_STORAGE_KEY = '_px_attr';
@@ -127,6 +128,7 @@
     var payload = {
       event_id: uuidv4(),
       event_name: eventName,
+      client_id: CLIENT_ID,
       visitor_id: getOrCreateVisitorId(),
       session_id: getOrCreateSessionId(),
       url: window.location.href,

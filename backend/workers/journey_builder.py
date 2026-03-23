@@ -60,25 +60,30 @@ async def process_batch():
 
 
 async def _build_journey(db: AsyncSession, order: Order):
-    # Resolve visitor_id via identity graph using email_hash
     if not order.customer_email_hash:
         log.warning("Order %s has no email_hash, skipping journey", order.order_id)
         return
 
+    client_id = order.client_id
+
+    # Resolve visitor_id via identity graph filtered by client_id
     result = await db.execute(
-        select(IdentityGraph.visitor_id)
-        .where(IdentityGraph.email_hash == order.customer_email_hash)
+        select(IdentityGraph.visitor_id).where(
+            IdentityGraph.client_id == client_id,
+            IdentityGraph.email_hash == order.customer_email_hash,
+        )
     )
     visitor_id = result.scalar_one_or_none()
 
     if not visitor_id:
-        log.info("No visitor_id found for order %s", order.order_id)
+        log.info("No visitor_id found for order %s (client %s)", order.order_id, client_id)
         return
 
-    # Fetch all sessions for this visitor before the order date
+    # Fetch all sessions for this visitor (same client) before the order date
     result = await db.execute(
         select(Session)
         .where(
+            Session.client_id == client_id,
             Session.visitor_id == visitor_id,
             Session.session_start <= (order.shopify_created_at or datetime.now(timezone.utc)),
         )
@@ -86,7 +91,6 @@ async def _build_journey(db: AsyncSession, order: Order):
     )
     sessions: list[Session] = list(result.scalars().all())
 
-    # Build touchpoints array
     touchpoints = []
     for s in sessions:
         tp = {
@@ -105,12 +109,14 @@ async def _build_journey(db: AsyncSession, order: Order):
 
     journey = OrderJourney(
         order_id=order.order_id,
+        client_id=client_id,
         visitor_id=visitor_id,
         touchpoints=touchpoints,
     )
     db.add(journey)
     log.info(
-        "Journey built for order %s — %d touchpoints", order.order_id, len(touchpoints)
+        "Journey built for order %s (client %s) — %d touchpoints",
+        order.order_id, client_id, len(touchpoints)
     )
 
 

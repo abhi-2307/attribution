@@ -40,9 +40,12 @@ class AttributionResult(Base):
     touchpoints_credited = Column(JSONB)  # [{ session_id, source, medium, campaign, credit }]
     created_at = Column(TIMESTAMP(timezone=True), server_default=func.now())
 
+    client_id = Column(Text, nullable=True)
+
     __table_args__ = (
         Index("ix_attribution_results_order_id", "order_id"),
         Index("ix_attribution_results_model", "model"),
+        Index("ix_attribution_results_client_id", "client_id"),
         {"schema": "attribution"},
     )
 
@@ -104,6 +107,7 @@ async def _attribute_journey(db, journey: OrderJourney, order: Order):
         record = AttributionResult(
             id=f"{journey.order_id}_{model_name}",
             order_id=journey.order_id,
+            client_id=journey.client_id,
             model=model_name,
             touchpoints_credited=credits,
         )

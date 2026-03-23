@@ -8,13 +8,14 @@ load_dotenv()
 import os
 import logging
 from pathlib import Path
-from fastapi import FastAPI
+from fastapi import Depends, FastAPI, HTTPException
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import Response
+from sqlalchemy import select, text
+from sqlalchemy.ext.asyncio import AsyncSession
 
-from sqlalchemy import text
-from .db.database import engine
-from .models import Base, PixelEventRaw, PixelEventQueue, Session, Order, OrderJourney, IdentityGraph  # noqa: F401 — registers all models
+from .db.database import engine, get_db
+from .models import Base, Client, PixelEventRaw, PixelEventQueue, Session, Order, OrderJourney, IdentityGraph  # noqa: F401 — registers all models
 
 from .api.pixel import router as pixel_router
 from .api.shopify import router as shopify_router
@@ -72,6 +73,27 @@ async def serve_pixel_js():
     logger.info("Serving pixel.js — PIXEL_BASE_URL=%s", PIXEL_BASE_URL)
     js = _PIXEL_JS_PATH.read_text()
     js = js.replace("{{PIXEL_BASE_URL}}", PIXEL_BASE_URL)
+    js = js.replace("{{CLIENT_ID}}", "")
+    return Response(content=js, media_type="application/javascript")
+
+
+@app.get("/pixel/{client_id}/pixel.js", include_in_schema=False)
+async def serve_pixel_js_for_client(
+    client_id: str,
+    db: AsyncSession = Depends(get_db),
+):
+    """Serve pixel.js pre-configured for a specific client. Embed as:
+    <script src="https://your-api.com/pixel/YOUR_CLIENT_ID/pixel.js"></script>
+    """
+    result = await db.execute(select(Client).where(Client.client_id == client_id))
+    client = result.scalar_one_or_none()
+    if not client:
+        raise HTTPException(status_code=404, detail="Unknown client_id")
+
+    logger.info("Serving pixel.js for client=%s", client_id)
+    js = _PIXEL_JS_PATH.read_text()
+    js = js.replace("{{PIXEL_BASE_URL}}", PIXEL_BASE_URL)
+    js = js.replace("{{CLIENT_ID}}", client_id)
     return Response(content=js, media_type="application/javascript")
 
 

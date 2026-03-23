@@ -15,9 +15,12 @@ class Order(Base):
     shopify_created_at = Column(TIMESTAMP(timezone=True))
     created_at = Column(TIMESTAMP(timezone=True), server_default=func.now())
 
+    client_id = Column(Text, nullable=True)
+
     __table_args__ = (
         Index("ix_orders_customer_email_hash", "customer_email_hash"),
         Index("ix_orders_shopify_created_at", "shopify_created_at"),
+        Index("ix_orders_client_id", "client_id"),
         {"schema": "attribution"},
     )
 
@@ -34,8 +37,11 @@ class OrderJourney(Base):
 
     created_at = Column(TIMESTAMP(timezone=True), server_default=func.now())
 
+    client_id = Column(Text, nullable=True)
+
     __table_args__ = (
         Index("ix_order_journeys_visitor_id", "visitor_id"),
+        Index("ix_order_journeys_client_id", "client_id"),
         {"schema": "attribution"},
     )
 
@@ -44,13 +50,16 @@ class IdentityGraph(Base):
     __tablename__ = "identity_graph"
 
     visitor_id = Column(Text, primary_key=True)
-    email_hash = Column(Text, unique=True, nullable=True)
+    email_hash = Column(Text, nullable=True)  # unique enforced per-client via DB index
     shopify_customer_id = Column(Text, nullable=True)
     first_seen = Column(TIMESTAMP(timezone=True))
     last_seen = Column(TIMESTAMP(timezone=True))
 
+    client_id = Column(Text, nullable=True)
+
     __table_args__ = (
         Index("ix_identity_graph_email_hash", "email_hash"),
         Index("ix_identity_graph_shopify_customer_id", "shopify_customer_id"),
+        Index("ix_identity_graph_client_id", "client_id"),
         {"schema": "attribution"},
     )

@@ -5,6 +5,8 @@ GET /attribution/summary        — revenue + ROAS by source/medium
 GET /attribution/campaign       — revenue + ROAS by campaign
 GET /journeys/order/{order_id}  — full journey for a specific order
 GET /pixel/health               — tracking rate vs Shopify orders
+
+All endpoints require X-API-Key header to identify the client.
 """
 
 import logging
@@ -16,8 +18,10 @@ from sqlalchemy import text, select, func
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from ..db.database import get_db
+from ..models.clients import Client
 from ..models.orders import Order, OrderJourney
 from ..workers.attribution_worker import AttributionResult
+from .deps import get_client
 
 log = logging.getLogger(__name__)
 router = APIRouter(tags=["attribution"])
@@ -30,11 +34,11 @@ async def attribution_summary(
     model: str = Query("last_click", description="last_click | first_click | linear | time_decay"),
     days: int = Query(30, description="Lookback window in days"),
     db: AsyncSession = Depends(get_db),
+    client: Client = Depends(get_client),
 ):
     """Revenue and ROAS grouped by source / medium."""
     since = datetime.now(timezone.utc) - timedelta(days=days)
 
-    # Pull attribution results joined to orders
     rows = await db.execute(
         text("""
             SELECT
@@ -42,15 +46,16 @@ async def attribution_summary(
                 tp->>'medium'   AS medium,
                 SUM((tp->>'credit')::numeric) AS attributed_revenue,
                 COUNT(DISTINCT ar.order_id) AS orders
-            FROM attribution_results ar,
+            FROM attribution.attribution_results ar,
                  jsonb_array_elements(ar.touchpoints_credited) AS tp
-            JOIN orders o ON o.order_id = ar.order_id
+            JOIN attribution.orders o ON o.order_id = ar.order_id
             WHERE ar.model = :model
+              AND ar.client_id = :client_id
               AND o.shopify_created_at >= :since
             GROUP BY 1, 2
             ORDER BY attributed_revenue DESC
         """),
-        {"model": model, "since": since},
+        {"model": model, "since": since, "client_id": client.client_id},
     )
     results = [dict(r) for r in rows.mappings()]
     return {"model": model, "days": days, "data": results}
@@ -63,8 +68,9 @@ async def attribution_campaign(
     model: str = Query("last_click"),
     days: int = Query(30),
     db: AsyncSession = Depends(get_db),
+    client: Client = Depends(get_client),
 ):
-    """Revenue grouped by campaign, joined with ad spend if available."""
+    """Revenue grouped by campaign."""
     since = datetime.now(timezone.utc) - timedelta(days=days)
 
     rows = await db.execute(
@@ -75,15 +81,16 @@ async def attribution_campaign(
                 tp->>'campaign'  AS campaign,
                 SUM((tp->>'credit')::numeric) AS attributed_revenue,
                 COUNT(DISTINCT ar.order_id) AS orders
-            FROM attribution_results ar,
+            FROM attribution.attribution_results ar,
                  jsonb_array_elements(ar.touchpoints_credited) AS tp
-            JOIN orders o ON o.order_id = ar.order_id
+            JOIN attribution.orders o ON o.order_id = ar.order_id
             WHERE ar.model = :model
+              AND ar.client_id = :client_id
               AND o.shopify_created_at >= :since
             GROUP BY 1, 2, 3
             ORDER BY attributed_revenue DESC
         """),
-        {"model": model, "since": since},
+        {"model": model, "since": since, "client_id": client.client_id},
     )
     results = [dict(r) for r in rows.mappings()]
     return {"model": model, "days": days, "data": results}
@@ -92,19 +99,28 @@ async def attribution_campaign(
 # ─── Order Journey ────────────────────────────────────────────────────────────
 
 @router.get("/journeys/order/{order_id}")
-async def get_order_journey(order_id: str, db: AsyncSession = Depends(get_db)):
+async def get_order_journey(
+    order_id: str,
+    db: AsyncSession = Depends(get_db),
+    client: Client = Depends(get_client),
+):
     """Return the full customer journey (touchpoints) for a specific order."""
     result = await db.execute(
-        select(OrderJourney).where(OrderJourney.order_id == order_id)
+        select(OrderJourney).where(
+            OrderJourney.order_id == order_id,
+            OrderJourney.client_id == client.client_id,
+        )
     )
     journey = result.scalar_one_or_none()
 
     if not journey:
         raise HTTPException(status_code=404, detail="Journey not found for this order")
 
-    # Also pull attribution credits for all models
     credits_result = await db.execute(
-        select(AttributionResult).where(AttributionResult.order_id == order_id)
+        select(AttributionResult).where(
+            AttributionResult.order_id == order_id,
+            AttributionResult.client_id == client.client_id,
+        )
     )
     credits = {r.model: r.touchpoints_credited for r in credits_result.scalars().all()}
 
@@ -122,6 +138,7 @@ async def get_order_journey(order_id: str, db: AsyncSession = Depends(get_db)):
 async def pixel_health(
     days: int = Query(7, description="Lookback window in days"),
     db: AsyncSession = Depends(get_db),
+    client: Client = Depends(get_client),
 ):
     """
     Compare Shopify orders vs pixel-tracked purchase events.
@@ -129,23 +146,22 @@ async def pixel_health(
     """
     since = datetime.now(timezone.utc) - timedelta(days=days)
 
-    # Total Shopify orders
     shopify_result = await db.execute(
-        text("SELECT COUNT(*) FROM orders WHERE shopify_created_at >= :since"),
-        {"since": since},
+        text("SELECT COUNT(*) FROM attribution.orders WHERE client_id = :client_id AND shopify_created_at >= :since"),
+        {"since": since, "client_id": client.client_id},
     )
     total_orders = shopify_result.scalar() or 0
 
-    # Pixel-tracked purchases
     pixel_result = await db.execute(
         text("""
-            SELECT COUNT(DISTINCT order_id)
-            FROM order_journeys oj
-            JOIN orders o ON o.order_id = oj.order_id
-            WHERE o.shopify_created_at >= :since
+            SELECT COUNT(DISTINCT oj.order_id)
+            FROM attribution.order_journeys oj
+            JOIN attribution.orders o ON o.order_id = oj.order_id
+            WHERE oj.client_id = :client_id
+              AND o.shopify_created_at >= :since
               AND jsonb_array_length(oj.touchpoints) > 0
         """),
-        {"since": since},
+        {"since": since, "client_id": client.client_id},
     )
     tracked_orders = pixel_result.scalar() or 0
 

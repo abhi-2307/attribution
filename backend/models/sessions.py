@@ -29,9 +29,12 @@ class Session(Base):
     page_view_count = Column(Text)  # stored as int-like for simplicity
     created_at = Column(TIMESTAMP(timezone=True))
 
+    client_id = Column(Text, nullable=True)
+
     __table_args__ = (
         Index("ix_sessions_visitor_id", "visitor_id"),
         Index("ix_sessions_session_start", "session_start"),
         Index("ix_sessions_utm_campaign", "utm_campaign"),
+        Index("ix_sessions_client_id", "client_id"),
         {"schema": "attribution"},
     )

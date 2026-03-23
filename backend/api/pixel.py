@@ -14,7 +14,10 @@ logger = logging.getLogger(__name__)
 from pydantic import BaseModel, UUID4, Field
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from sqlalchemy import select
+
 from ..db.database import get_db
+from ..models.clients import Client
 from ..models.events import PixelEventRaw, PixelEventQueue
 
 router = APIRouter(prefix="/v1/pixel", tags=["pixel"])
@@ -25,6 +28,8 @@ router = APIRouter(prefix="/v1/pixel", tags=["pixel"])
 class EventPayload(BaseModel):
     event_id: UUID4
     event_name: str = Field(..., max_length=100)
+
+    client_id: str = Field(..., max_length=100)
 
     visitor_id: str = Field(..., max_length=100)
     session_id: str = Field(..., max_length=100)
@@ -79,6 +84,12 @@ async def ingest_event(
     request: Request,
     db: AsyncSession = Depends(get_db),
 ):
+    # Resolve client
+    client_result = await db.execute(select(Client).where(Client.client_id == payload.client_id))
+    client = client_result.scalar_one_or_none()
+    if not client:
+        raise HTTPException(status_code=403, detail="Unknown client_id")
+
     # Validate event name
     if payload.event_name not in ALLOWED_EVENTS:
         # Accept unknown events but flag them — don't reject to avoid data loss
@@ -101,6 +112,7 @@ async def ingest_event(
     # ── Write raw event (immutable) ──────────────────────────────────────────
     raw_event = PixelEventRaw(
         event_id=payload.event_id,
+        client_id=payload.client_id,
         visitor_id=payload.visitor_id,
         session_id=payload.session_id,
         event_name=payload.event_name,
@@ -126,6 +138,7 @@ async def ingest_event(
     queue_entry = PixelEventQueue(
         id=uuid.uuid4(),
         event_id=payload.event_id,
+        client_id=payload.client_id,
         status="pending",
     )
     db.add(queue_entry)

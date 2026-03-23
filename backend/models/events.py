@@ -34,11 +34,14 @@ class PixelEventRaw(Base):
     event_timestamp = Column(TIMESTAMP(timezone=True), nullable=False)
     created_at = Column(TIMESTAMP(timezone=True), server_default=func.now())
 
+    client_id = Column(Text, nullable=True)  # nullable for backwards-compat; set NOT NULL after backfill
+
     __table_args__ = (
         Index("ix_pixel_events_raw_visitor_id", "visitor_id"),
         Index("ix_pixel_events_raw_session_id", "session_id"),
         Index("ix_pixel_events_raw_event_timestamp", "event_timestamp"),
         Index("ix_pixel_events_raw_event_name", "event_name"),
+        Index("ix_pixel_events_raw_client_id", "client_id"),
         {"schema": "attribution"},
     )
 
@@ -56,8 +59,11 @@ class PixelEventQueue(Base):
     created_at = Column(TIMESTAMP(timezone=True), server_default=func.now())
     processed_at = Column(TIMESTAMP(timezone=True))
 
+    client_id = Column(Text, nullable=True)
+
     __table_args__ = (
         Index("ix_pixel_event_queue_status", "status"),
         Index("ix_pixel_event_queue_created_at", "created_at"),
+        Index("ix_pixel_event_queue_client_id", "client_id"),
         {"schema": "attribution"},
     )
