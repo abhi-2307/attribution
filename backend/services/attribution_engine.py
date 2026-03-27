@@ -74,6 +74,8 @@ def attribute_all_models(
     conversion_time: datetime,
 ) -> dict[str, list[AttributionResult]]:
     """Compute all four models at once."""
+    if not touchpoints:
+        return {"last_click": [], "first_click": [], "linear": [], "time_decay": []}
     return {
         "last_click": _last_click(touchpoints, order_value),
         "first_click": _first_click(touchpoints, order_value),
