@@ -5,6 +5,7 @@ Attribution Platform — FastAPI Application
 from dotenv import load_dotenv
 load_dotenv()
 
+import asyncio
 import os
 import logging
 from pathlib import Path
@@ -20,6 +21,7 @@ from .models import Base, Client, PixelEventRaw, PixelEventQueue, Session, Order
 from .api.pixel import router as pixel_router
 from .api.shopify import router as shopify_router
 from .api.attribution import router as attribution_router
+from .workers import session_builder, journey_builder, attribution_worker
 
 # ── Logging setup ─────────────────────────────────────────────────────────────
 logging.basicConfig(
@@ -44,13 +46,17 @@ app = FastAPI(
 
 
 @app.on_event("startup")
-async def create_tables():
+async def startup():
     async with engine.begin() as conn:
-        # Create the attribution schema if it doesn't exist
         await conn.execute(text("CREATE SCHEMA IF NOT EXISTS attribution"))
-        # Create all tables
         await conn.run_sync(Base.metadata.create_all)
     logger.info("Database schema and tables ensured.")
+
+    # Start background workers
+    asyncio.create_task(session_builder.run())
+    asyncio.create_task(journey_builder.run())
+    asyncio.create_task(attribution_worker.run())
+    logger.info("Background workers started.")
 
 # Pixel must accept requests from any domain.
 # allow_credentials=True requires explicit origins (not "*"), so we use allow_origin_regex instead.
