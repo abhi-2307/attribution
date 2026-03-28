@@ -94,15 +94,9 @@ async def orders_created(
     )
     db.add(order)
 
-    # Stitch identity
-    if email:
-        await stitch_identity(
-            db,
-            client_id=client_id,
-            visitor_id=email_hash,  # temp visitor_id placeholder; resolved later
-            email=email,
-            shopify_customer_id=shopify_customer_id,
-        )
+    # Identity stitching happens via the pixel purchase event (which carries the
+    # real browser visitor_id + email_hash). The webhook alone doesn't know the
+    # visitor_id, so we don't create an identity graph record here.
 
     await db.commit()
 

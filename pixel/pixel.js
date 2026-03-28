@@ -63,6 +63,8 @@
       vid = uuidv4();
       setCookie(VISITOR_COOKIE, vid, VISITOR_EXPIRY_DAYS);
     }
+    // Mirror to localStorage so Shopify Customer Events pixel can read it
+    try { localStorage.setItem('_px_vid', vid); } catch (e) {}
     return vid;
   }
 
