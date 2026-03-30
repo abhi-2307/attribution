@@ -24,14 +24,18 @@ async def stitch_identity(
     client_id: str,
     visitor_id: str,
     email: str | None = None,
+    email_hash: str | None = None,
     shopify_customer_id: str | None = None,
 ):
     """
     Upsert identity graph row for a specific client.
+    Pass either email (will be hashed) or pre-computed email_hash directly.
     If email_hash already maps to a different visitor_id within the same client,
     merge by updating the existing record's last_seen and linking shopify_customer_id.
     """
-    email_hash = hash_email(email) if email else None
+    if email:
+        email_hash = hash_email(email)
+    # else: use email_hash as passed (e.g. from browser pixel which hashes client-side)
     now = datetime.now(timezone.utc)
 
     # Try to find existing record by visitor_id within this client

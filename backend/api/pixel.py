@@ -19,6 +19,7 @@ from sqlalchemy import select
 from ..db.database import get_db
 from ..models.clients import Client
 from ..models.events import PixelEventRaw, PixelEventQueue
+from ..services.identity_graph import stitch_identity
 
 router = APIRouter(prefix="/v1/pixel", tags=["pixel"])
 
@@ -142,6 +143,15 @@ async def ingest_event(
         status="pending",
     )
     db.add(queue_entry)
+
+    # Stitch identity on purchase events — links browser visitor_id to email_hash
+    if payload.event_name == "purchase" and payload.visitor_id and payload.email_hash:
+        await stitch_identity(
+            db,
+            client_id=payload.client_id,
+            visitor_id=payload.visitor_id,
+            email_hash=payload.email_hash,
+        )
 
     await db.commit()
 
