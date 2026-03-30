@@ -105,13 +105,8 @@
 
     if (Object.keys(incoming).length === 0) return;
 
-    var existing = {};
-    try {
-      existing = JSON.parse(localStorage.getItem(ATTR_STORAGE_KEY) || '{}');
-    } catch (e) {}
-
-    var merged = Object.assign({}, existing, incoming);
-    localStorage.setItem(ATTR_STORAGE_KEY, JSON.stringify(merged));
+    // Replace stored attribution entirely — never merge old campaign params into new sessions
+    try { localStorage.setItem(ATTR_STORAGE_KEY, JSON.stringify(incoming)); } catch (e) {}
   }
 
   function getStoredAttribution() {
@@ -361,7 +356,7 @@
 
   // ─── Auto-init ────────────────────────────────────────────────────────────
 
-  captureAttributionParams();
+  try { captureAttributionParams(); } catch (e) {}
 
   function init() {
     trackFirstVisitAndSession();
