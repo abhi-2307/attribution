@@ -323,6 +323,16 @@
     getOrCreateVisitorId();
     getOrCreateSessionId();
 
+    // If this is a new session with no incoming attribution params, clear stored
+    // attribution so the session is correctly marked as direct — not inherited
+    // from a previous paid session weeks ago
+    if (isNewSession) {
+      var hasIncomingAttribution = ALL_ATTR_PARAMS.some(function(p) { return !!getUrlParam(p); });
+      if (!hasIncomingAttribution) {
+        try { localStorage.removeItem(ATTR_STORAGE_KEY); } catch(e) {}
+      }
+    }
+
     if (isFirstVisit) {
       sendEvent(buildPayload('first_visit'));
     }
